@@ -155,3 +155,47 @@ test("native Pi resumes a session recorded without pi-web-access with its record
 	assert.ok(recorded.length > 0);
 	assert.deepEqual(requests[1].tools.map(tool => tool.name), recorded);
 });
+
+// `tool-activation.test.mjs` boots the extension against a hand-written registerTool
+// mock and asserts on the registered tool's `.exposure` field. That proves this extension
+// PASSES the right exposure to pi.registerTool(); it cannot prove real Pi actually keeps
+// a deferred tool off the model's declared set, or that the tool can still be loaded
+// later -- a future Pi that stopped honoring `exposure` would leave that test green with
+// the real behavior gone. This drives the real session instead.
+test("toolExposure deferred keeps the four web tools off the model's declared set", async () => {
+	const requests = await withNativeEnv({ toolExposure: "deferred" }, async () => {
+		const { faux, requests, captureRequest, start } = nativeHarness();
+		faux.setResponses([(context) => {
+			captureRequest(context);
+			return fauxAssistantMessage("done");
+		}]);
+		const session = await start({ extensions: true, sessionManager: SessionManager.inMemory(root), reason: "startup", noTools: "builtin" });
+		await session.prompt("Research this");
+		session.dispose();
+		return requests;
+	});
+	for (const name of ["web_search", "source_check", "fetch_content", "get_search_content"]) {
+		assert.ok(!requests[0].tools.some(tool => tool.name === name), `${name} should not be declared when deferred`);
+	}
+});
+
+test("a deferred tool stays registered and can still be activated and declared later", async () => {
+	const requests = await withNativeEnv({ toolExposure: "deferred" }, async () => {
+		const { faux, requests, captureRequest, start } = nativeHarness();
+		const reply = (context) => {
+			captureRequest(context);
+			return fauxAssistantMessage("done");
+		};
+		faux.setResponses([reply, reply]);
+		const session = await start({ extensions: true, sessionManager: SessionManager.inMemory(root), reason: "startup", noTools: "builtin" });
+		// Not permanently unloadable: it is registered (just not declared), so it can be
+		// activated later -- the same mechanism tool_search uses internally.
+		assert.ok(session.getAllTools().some(tool => tool.name === "web_search"));
+		assert.ok(!session.getActiveToolNames().includes("web_search"));
+		session.setActiveToolsByName([...session.getActiveToolNames(), "web_search"]);
+		await session.prompt("Research this now");
+		session.dispose();
+		return requests;
+	});
+	assert.ok(requests.at(-1).tools.some(tool => tool.name === "web_search"));
+});
