@@ -48,7 +48,7 @@ function run(config = {}, options = {}) {
 			console.log(JSON.stringify({
 				registered: [...tools.keys()], before, after: active, result,
 				loader: loader && { description: loader.description, promptSnippet: loader.promptSnippet, parameters: loader.parameters },
-				definitions: [...tools.values()].map(({ name, description, parameters, exposure }) => ({ name, description, parameters, exposure })),
+				definitions: [...tools.values()].map(({ name, description, parameters }) => ({ name, description, parameters })),
 			}));
 		`,
 		encoding: "utf8",
@@ -59,16 +59,6 @@ function run(config = {}, options = {}) {
 }
 
 const defaultNames = ["web_search", "source_check", "fetch_content", "get_search_content"];
-
-test("toolExposure deferred removes the four large web schemas from the default loadout", () => {
-	const state = run({ toolExposure: "deferred" });
-	for (const name of defaultNames) assert.equal(state.definitions.find((tool) => tool.name === name).exposure, "deferred");
-});
-
-test("toolExposure defaults to direct for backward compatibility", () => {
-	const state = run();
-	for (const name of defaultNames) assert.equal(state.definitions.find((tool) => tool.name === name).exposure, "direct");
-});
 
 test("fresh sessions expose compact configured guidance and keep web tools registered but dormant", () => {
 	const state = run();

@@ -1066,9 +1066,7 @@ Enabling the tools mid-conversation can cost a prompt-cache miss. Some models ac
 
 Restart Pi after changing it. Dynamic activation needs Pi 0.86.0 or newer; older Pi logs a warning and keeps every enabled web tool available.
 
-#### Tool exposure
-
-`"toolExposure"` is a separate, independent setting from `"toolActivation"` above. Activation decides when the configured tools' schemas are *active* (declared to the model) once Pi already plans to send them; exposure decides whether Pi declares them to the model at all by default.
+`"toolExposure": "deferred"` goes further: `web_search`, `source_check`, `fetch_content`, and `get_search_content` stay off every request until `web_enable` or Pi's `tool_search` loads them. `tool_search` only does this when it is enabled in Pi's settings, for example `"defaultTools": ["+tool_search"]`.
 
 ```json
 {
@@ -1076,14 +1074,7 @@ Restart Pi after changing it. Dynamic activation needs Pi 0.86.0 or newer; older
 }
 ```
 
-- `"direct"` (the default) — `web_search`, `source_check`, `fetch_content`, and `get_search_content` are declared the same way they always have been. No behavior change from before this setting existed.
-- `"deferred"` — the four tools stay registered but are not declared by default. Pi's `tool_search` extension (`"defaultTools": ["+tool_search"]` in Pi's own settings) can still find and declare whichever one becomes relevant on the turn that needs it; nothing is permanently unreachable.
-
-This exists because these four tools' schemas are a meaningful share of what Pi sends on every single request when they are declared but never called in that session — common for sessions that never do research. `"deferred"` removes that recurring cost for sessions that don't use these tools at all.
-
-**This is not a guaranteed cost reduction, and restart is required after changing it.** Measured results are model- and task-dependent: on sessions that do end up calling one of these tools, the `tool_search` round trip (an extra turn to find and declare the tool) can cost more than the avoided schema declaration saves, especially if the tool is needed from early in the session. Treat this as a lever to benchmark against your own workload and model, not a default recommendation — see the discussion in #575.
-
-`toolExposure: "deferred"` only ever removes a tool from the two *implicit* activation fallbacks above (the `"auto"`/`"dynamic"` eager-compatibility path, and the pre-per-tool-transcript resume path) — an explicit `web_enable` call, or a future explicit `tool_search` match, can still declare it.
+Deferred exposure always uses dynamic activation, so it can't be combined with `"toolActivation": "eager"`. The default is `"direct"`. Restart Pi after changing it. It is not a guaranteed saving: loading the tools later can cost the cache miss described above, and finding them through `tool_search` takes an extra model turn.
 
 ### Shortcuts
 

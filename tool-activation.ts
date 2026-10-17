@@ -60,20 +60,7 @@ function transcriptToolNames(messages: SessionContext["messages"]): Set<string> 
 	return tools;
 }
 
-export function registerWebToolActivation(
-	pi: ExtensionAPI,
-	tools: ReadonlyArray<WebActivationTool>,
-	mode: "auto" | "dynamic",
-	// When true, these tools are registered with `exposure: "deferred"` (see index.ts /
-	// toolExposure). The implicit activation paths below (the "eager" compatibility fallback
-	// for models that can't add tools mid-conversation, and the "pre-dates per-tool transcript
-	// tracking" resume fallback) exist to activate tools the model never explicitly asked for.
-	// A deferred tool is deferred specifically so it is NOT declared until something asks for
-	// it, so neither implicit path should silently reactivate it -- only an explicit ask (the
-	// web_enable tool below, or Pi's own tool_search) should. Both of those stay unaffected:
-	// web_enable's own activation list keeps every configured tool regardless of this flag.
-	deferred = false,
-): void {
+export function registerWebToolActivation(pi: ExtensionAPI, tools: ReadonlyArray<WebActivationTool>, mode: "auto" | "dynamic"): void {
 	if (tools.length === 0) return;
 	if (!supportsDynamicTools(pi)) {
 		console.warn("[pi-web-access] Dynamic tool activation requires Pi 0.86.0 or newer; web tools remain eagerly available.");
@@ -141,10 +128,8 @@ export function registerWebToolActivation(
 			const declared = transcriptToolNames(messages);
 			// "auto" decides once, for a fresh session; recorded sessions keep their tools.
 			const eager = mode === "auto" && !declared && messages.length === 0 && !addsToolsWithoutCheckpoint(ctx.model);
-			// Deferred tools opt out of both implicit fallbacks above -- see the parameter doc.
-			const impliedNames = deferred ? [] : names;
 			// Sessions from before transcript tool declarations keep every web tool; fresh ones start with none.
-			const recorded = declared ?? new Set(messages.length > 0 || eager ? impliedNames : []);
+			const recorded = declared ?? new Set(messages.length > 0 || eager ? names : []);
 			loaderSelected = !eager && (!declared || declared.has(LOADER_NAME));
 			const others = pi.getActiveTools().filter(name => name !== LOADER_NAME && !names.includes(name));
 			pi.setActiveTools([...new Set([...others, ...names.filter(name => recorded.has(name)), ...(loaderSelected ? [LOADER_NAME] : [])])]);

@@ -722,12 +722,15 @@ export default function (pi: ExtensionAPI) {
 	const initConfig = loadConfigForExtensionInit();
 	const fetchModeConfig = resolveFetchModeConfig(initConfig);
 	const toolActivation = initConfig.toolActivation ?? "auto";
-	const toolExposure = initConfig.toolExposure === "deferred" ? "deferred" : "direct";
-	if (initConfig.toolExposure !== undefined && initConfig.toolExposure !== "direct" && initConfig.toolExposure !== "deferred") {
-		throw new Error(`toolExposure in ${WEB_SEARCH_CONFIG_PATH} must be "direct" or "deferred"`);
-	}
 	if (toolActivation !== "auto" && toolActivation !== "dynamic" && toolActivation !== "eager") {
 		throw new Error(`toolActivation in ${WEB_SEARCH_CONFIG_PATH} must be "auto", "dynamic", or "eager"`);
+	}
+	const toolExposure = initConfig.toolExposure ?? "direct";
+	if (toolExposure !== "direct" && toolExposure !== "deferred") {
+		throw new Error(`toolExposure in ${WEB_SEARCH_CONFIG_PATH} must be "direct" or "deferred"`);
+	}
+	if (toolExposure === "deferred" && toolActivation === "eager") {
+		throw new Error(`toolExposure "deferred" in ${WEB_SEARCH_CONFIG_PATH} cannot be combined with toolActivation "eager"`);
 	}
 	const allowedSearchProviders = initConfig.webSearch?.allowedProviders === undefined ? RESOLVED_SEARCH_PROVIDERS : getAllowedSearchProviders();
 	const allEligibleProviders = allowedSearchProviders.filter(provider => ALL_SEARCH_PROVIDERS.includes(provider));
@@ -2267,12 +2270,14 @@ export default function (pi: ExtensionAPI) {
 	});
 	}
 
+	// Deferred tools are never declared on registration, so web_enable must stay the model's route
+	// to them: auto's eager path would leave a session with neither the tools nor the loader.
 	if (toolActivation !== "eager") registerWebToolActivation(pi, [
 		...(webSearchEnabled ? [{ name: toolNames.webSearch, capability: "search" as const }] : []),
 		...(sourceCheckEnabled ? [{ name: toolNames.sourceCheck, capability: "source-check" as const }] : []),
 		...(fetchContentEnabled ? [{ name: toolNames.fetchContent, capability: "fetch" as const }] : []),
 		...(getSearchContentEnabled ? [{ name: toolNames.getSearchContent, capability: "stored-content" as const }] : []),
-	], toolActivation, toolExposure === "deferred");
+	], toolExposure === "deferred" ? "dynamic" : toolActivation);
 
 	if (isCommandEnabled(initConfig, "websearch")) pi.registerCommand("websearch", {
 		description: "Open web search curator",

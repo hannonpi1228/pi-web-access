@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, getCurrentTools, getSystemMessageText } from "@earendil-works/pi-ai";
-import { createAgentSession, DefaultResourceLoader, SessionManager } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, createToolSearchExtension, DefaultResourceLoader, SessionManager } from "@earendil-works/pi-coding-agent";
 
 const extensionPath = new URL("../index.ts", import.meta.url).pathname;
 const root = mkdtempSync(join(tmpdir(), "pi-web-access-sdk-"));
@@ -43,8 +43,8 @@ function nativeHarness({ api, compat } = {}) {
 		tools: getCurrentTools(context.messages),
 		systemText: context.messages.filter(message => message.role === "system").map(getSystemMessageText).join("\n\n"),
 	});
-	async function start({ extensions, sessionManager, reason, noTools }) {
-		const loader = new DefaultResourceLoader({ cwd: root, agentDir: root, additionalExtensionPaths: extensions ? [extensionPath] : [], noExtensions: !extensions });
+	async function start({ extensions, sessionManager, reason, noTools, extensionFactories }) {
+		const loader = new DefaultResourceLoader({ cwd: root, agentDir: root, additionalExtensionPaths: extensions ? [extensionPath] : [], noExtensions: !extensions, extensionFactories });
 		await loader.reload();
 		const { session, extensionsResult } = await createAgentSession({
 			cwd: root,
@@ -156,46 +156,49 @@ test("native Pi resumes a session recorded without pi-web-access with its record
 	assert.deepEqual(requests[1].tools.map(tool => tool.name), recorded);
 });
 
-// `tool-activation.test.mjs` boots the extension against a hand-written registerTool
-// mock and asserts on the registered tool's `.exposure` field. That proves this extension
-// PASSES the right exposure to pi.registerTool(); it cannot prove real Pi actually keeps
-// a deferred tool off the model's declared set, or that the tool can still be loaded
-// later -- a future Pi that stopped honoring `exposure` would leave that test green with
-// the real behavior gone. This drives the real session instead.
-test("toolExposure deferred keeps the four web tools off the model's declared set", async () => {
+const deferredWebTools = ["web_search", "source_check", "fetch_content", "get_search_content"];
+
+test("deferred exposure keeps web_enable as the route to web tools on a model without native tool additions", async () => {
 	const requests = await withNativeEnv({ toolExposure: "deferred" }, async () => {
 		const { faux, requests, captureRequest, start } = nativeHarness();
-		faux.setResponses([(context) => {
-			captureRequest(context);
-			return fauxAssistantMessage("done");
-		}]);
+		faux.setResponses([
+			(context) => {
+				captureRequest(context);
+				return fauxAssistantMessage(fauxToolCall("web_enable", {}), { stopReason: "toolUse" });
+			},
+			(context) => {
+				captureRequest(context);
+				return fauxAssistantMessage("done");
+			},
+		]);
 		const session = await start({ extensions: true, sessionManager: SessionManager.inMemory(root), reason: "startup", noTools: "builtin" });
 		await session.prompt("Research this");
 		session.dispose();
 		return requests;
 	});
-	for (const name of ["web_search", "source_check", "fetch_content", "get_search_content"]) {
-		assert.ok(!requests[0].tools.some(tool => tool.name === name), `${name} should not be declared when deferred`);
-	}
+	assert.deepEqual(requests[0].tools.map(tool => tool.name), ["web_enable"]);
+	assert.deepEqual(requests[1].tools.map(tool => tool.name), ["web_enable", ...deferredWebTools]);
 });
 
-test("a deferred tool stays registered and can still be activated and declared later", async () => {
+test("Pi's tool_search finds and loads a deferred web tool", async () => {
 	const requests = await withNativeEnv({ toolExposure: "deferred" }, async () => {
 		const { faux, requests, captureRequest, start } = nativeHarness();
-		const reply = (context) => {
-			captureRequest(context);
-			return fauxAssistantMessage("done");
-		};
-		faux.setResponses([reply, reply]);
-		const session = await start({ extensions: true, sessionManager: SessionManager.inMemory(root), reason: "startup", noTools: "builtin" });
-		// Not permanently unloadable: it is registered (just not declared), so it can be
-		// activated later -- the same mechanism tool_search uses internally.
-		assert.ok(session.getAllTools().some(tool => tool.name === "web_search"));
-		assert.ok(!session.getActiveToolNames().includes("web_search"));
-		session.setActiveToolsByName([...session.getActiveToolNames(), "web_search"]);
-		await session.prompt("Research this now");
+		faux.setResponses([
+			(context) => {
+				captureRequest(context);
+				return fauxAssistantMessage(fauxToolCall("tool_search", { query: "fetch content from a URL" }), { stopReason: "toolUse" });
+			},
+			(context) => {
+				captureRequest(context);
+				return fauxAssistantMessage("done");
+			},
+		]);
+		const session = await start({ extensions: true, sessionManager: SessionManager.inMemory(root), reason: "startup", noTools: "builtin", extensionFactories: [createToolSearchExtension()] });
+		session.setActiveToolsByName([...session.getActiveToolNames(), "tool_search"]);
+		await session.prompt("Read https://example.com");
 		session.dispose();
 		return requests;
 	});
-	assert.ok(requests.at(-1).tools.some(tool => tool.name === "web_search"));
+	assert.ok(!requests[0].tools.some(tool => deferredWebTools.includes(tool.name)));
+	assert.ok(requests[1].tools.some(tool => tool.name === "fetch_content"));
 });
